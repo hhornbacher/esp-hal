@@ -133,7 +133,7 @@ impl OsMbufPool {
 
 /// Chained memory buffer.
 #[repr(C)]
-pub(crate) struct OsMbuf {
+pub struct OsMbuf {
     /// Current pointer to data in the structure
     om_data: *const u8,
     /// Flags associated with this buffer, see OS_MBUF_F_* defintions
@@ -616,6 +616,7 @@ unsafe extern "C" fn ble_npl_get_time_forever() -> u32 {
     TIME_FOREVER
 }
 
+#[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_hw_exit_critical(mask: u32) {
     trace!("ble_npl_hw_exit_critical {}", mask);
     unsafe {
@@ -624,6 +625,7 @@ unsafe extern "C" fn ble_npl_hw_exit_critical(mask: u32) {
     }
 }
 
+#[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_hw_enter_critical() -> u32 {
     trace!("ble_npl_hw_enter_critical");
     unsafe { crate::ESP_RADIO_LOCK.acquire().inner() }
@@ -643,6 +645,7 @@ unsafe extern "C" fn ble_npl_time_ticks_to_ms32(time: ble_npl_time_t) -> u32 {
     blob_ticks_to_millis(time)
 }
 
+#[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_time_ms_to_ticks32(ms: u32) -> ble_npl_time_t {
     trace!("ble_npl_time_ms_to_ticks32 {}", ms);
     millis_to_blob_ticks(ms)
@@ -657,6 +660,7 @@ unsafe extern "C" fn ble_npl_time_ticks_to_ms(
     0
 }
 
+#[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_time_ms_to_ticks(
     ms: u32,
     p_time: *mut ble_npl_time_t,
@@ -666,6 +670,7 @@ unsafe extern "C" fn ble_npl_time_ms_to_ticks(
     0
 }
 
+#[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_time_get() -> u32 {
     trace!("ble_npl_time_get");
     Instant::now().duration_since_epoch().as_millis() as u32
@@ -685,10 +690,12 @@ unsafe extern "C" fn ble_npl_callout_remaining_ticks(
     todo!()
 }
 
+#[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_callout_get_ticks(_callout: *const ble_npl_callout) -> ble_npl_time_t {
     todo!()
 }
 
+#[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_callout_is_active(callout: *const ble_npl_callout) -> bool {
     debug!(
         "Missing real implementation: ble_npl_callout_is_active {:?}",
@@ -717,6 +724,7 @@ unsafe extern "C" fn ble_npl_callout_deinit(callout: *const ble_npl_callout) {
     }
 }
 
+#[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_callout_stop(callout: *const ble_npl_callout) {
     trace!("ble_npl_callout_stop {:?}", callout);
 
@@ -729,6 +737,7 @@ unsafe extern "C" fn ble_npl_callout_stop(callout: *const ble_npl_callout) {
     }
 }
 
+#[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_callout_reset(
     callout: *const ble_npl_callout,
     time: ble_npl_time_t,
@@ -747,6 +756,7 @@ unsafe extern "C" fn ble_npl_callout_reset(
     0
 }
 
+#[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_sem_get_count(_sem: *const ble_npl_sem) -> u16 {
     todo!()
 }
@@ -755,6 +765,7 @@ unsafe extern "C" fn ble_npl_sem_release(_sem: *const ble_npl_sem) -> ble_npl_er
     todo!()
 }
 
+#[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_sem_pend(
     _sem: *const ble_npl_sem,
     _time: ble_npl_time_t,
@@ -766,14 +777,17 @@ unsafe extern "C" fn ble_npl_sem_deinit(_sem: *const ble_npl_sem) -> ble_npl_err
     todo!()
 }
 
-unsafe extern "C" fn ble_npl_sem_init(_sem: *const ble_npl_sem, _val: u16) -> ble_npl_error_t {
+#[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
+unsafe extern "C" fn ble_npl_sem_init(sem: *const ble_npl_sem, val: u16) -> ble_npl_error_t {
     todo!()
 }
 
+#[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_mutex_release(_mutex: *const ble_npl_mutex) -> ble_npl_error_t {
     todo!()
 }
 
+#[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_mutex_pend(
     _mutex: *const ble_npl_mutex,
     _time: ble_npl_time_t,
@@ -796,6 +810,7 @@ unsafe extern "C" fn ble_npl_event_set_arg(event: *const ble_npl_event, arg: *co
     }
 }
 
+#[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_event_get_arg(event: *const ble_npl_event) -> *const c_void {
     trace!("ble_npl_event_get_arg {:?}", event);
 
@@ -845,6 +860,7 @@ unsafe extern "C" fn ble_npl_event_deinit(event: *const ble_npl_event) {
     }
 }
 
+#[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_event_init(
     event: *const ble_npl_event,
     func: *const ble_npl_event_fn,
@@ -873,6 +889,7 @@ unsafe extern "C" fn ble_npl_eventq_is_empty(queue: *mut ble_npl_eventq) -> bool
     queue::queue_messages_waiting(wrapper.dummy as _) == 0
 }
 
+#[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_event_run(event: *const ble_npl_event) {
     trace!("ble_npl_event_run {:?}", event);
 
@@ -913,6 +930,7 @@ unsafe extern "C" fn ble_npl_eventq_remove(
     }
 }
 
+#[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_eventq_put(queue: *mut ble_npl_eventq, event: *const ble_npl_event) {
     trace!("ble_npl_eventq_put {:?} {:?}", queue, event);
 
@@ -938,6 +956,7 @@ unsafe extern "C" fn ble_npl_eventq_put(queue: *mut ble_npl_eventq, event: *cons
     );
 }
 
+#[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_eventq_get(
     queue: *mut ble_npl_eventq,
     timeout: ble_npl_time_t,
@@ -963,6 +982,7 @@ unsafe extern "C" fn ble_npl_eventq_get(
     evt.cast_const()
 }
 
+#[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_eventq_init(queue: *mut ble_npl_eventq) {
     trace!("ble_npl_eventq_init {:?}", queue);
 
@@ -981,6 +1001,7 @@ unsafe extern "C" fn ble_npl_eventq_deinit(queue: *mut ble_npl_eventq) {
     wrapper.dummy = 0;
 }
 
+#[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_callout_init(
     callout: *const ble_npl_callout,
     eventq: *const ble_npl_eventq,
@@ -1025,14 +1046,17 @@ unsafe extern "C" fn callout_timer_callback_wrapper(arg: *mut c_void) {
     }
 }
 
+#[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_mutex_init(_mutex: *const ble_npl_mutex) -> u32 {
     todo!()
 }
 
+#[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_get_current_task_id() -> *const c_void {
     todo!()
 }
 
+#[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_os_started() -> bool {
     true
 }
