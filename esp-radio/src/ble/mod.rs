@@ -5,8 +5,10 @@
 #[cfg(bt_controller = "btdm")]
 pub(crate) mod btdm;
 
-#[cfg(bt_controller = "npl")]
+#[cfg(all(bt_controller = "npl", not(feature = "export-npl")))]
 pub(crate) mod npl;
+#[cfg(all(bt_controller = "npl", feature = "export-npl"))]
+pub mod npl;
 
 use alloc::{boxed::Box, collections::vec_deque::VecDeque, vec::Vec};
 use core::mem::MaybeUninit;

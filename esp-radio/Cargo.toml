@@ -284,6 +284,9 @@ defmt = [
 #! Unstable APIs are drivers and features that are not yet ready for general use.
 #! They may be incomplete, have bugs, or be subject to change without notice.
 
+## Enables the re-exporting of BLE NPL so that a NPL based host (e.g. Nimble Host) can reuse the porting layer
+export-npl = ["ble"]
+
 ## Enables APIs that are not stable and thus come with no stability guarantees.
 ## Never enable this feature in a library crate using esp-radio.
 unstable = [
