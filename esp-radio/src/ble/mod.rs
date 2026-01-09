@@ -3,8 +3,11 @@
 #[cfg(bt_controller = "btdm")]
 pub(crate) mod btdm;
 
-#[cfg(bt_controller = "npl")]
+#[cfg(all(bt_controller = "npl", not(feature = "ble-host-npl")))]
 pub(crate) mod npl;
+/// BLE NPL (NimBLE Porting Layer) for external C-based BLE host integration.
+#[cfg(all(bt_controller = "npl", feature = "ble-host-npl"))]
+pub mod npl;
 
 use alloc::{boxed::Box, collections::vec_deque::VecDeque, vec::Vec};
 use core::mem::MaybeUninit;
