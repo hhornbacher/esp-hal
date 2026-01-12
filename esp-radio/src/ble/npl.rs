@@ -13,6 +13,7 @@ use crate::{
     compat::{
         self, OSI_FUNCS_TIME_BLOCKING,
         common::str_from_c,
+        mutex::{mutex_create, mutex_delete, mutex_lock, mutex_unlock},
         queue,
         semaphore::{sem_create, sem_delete, sem_give, sem_take},
     },
@@ -882,20 +883,58 @@ unsafe extern "C" fn ble_npl_sem_init(sem: *const ble_npl_sem, val: u16) -> ble_
 }
 
 #[cfg_attr(feature = "ble-host-npl", unsafe(no_mangle))]
-unsafe extern "C" fn ble_npl_mutex_release(_mutex: *const ble_npl_mutex) -> ble_npl_error_t {
-    todo!()
+unsafe extern "C" fn ble_npl_mutex_release(mutex: *const ble_npl_mutex) -> ble_npl_error_t {
+    trace!("ble_npl_mutex_release {:?}", mutex);
+
+    let mutex = if !mutex.is_null() {
+        // safety: We are protected by the check we just performed
+        unsafe { (*mutex.cast_mut()).dummy as *mut c_void }
+    } else {
+        return ble_npl_error_BLE_NPL_EINVAL;
+    };
+
+    if mutex_unlock(mutex) == 1 {
+        ble_npl_error_BLE_NPL_OK
+    } else {
+        ble_npl_error_BLE_NPL_ERROR
+    }
 }
 
 #[cfg_attr(feature = "ble-host-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_mutex_pend(
-    _mutex: *const ble_npl_mutex,
+    mutex: *const ble_npl_mutex,
+    // It's fine for us to ignore this as any implementation in NimBLE always calls `BLE_NPL_TIME_FOREVER`
     _time: ble_npl_time_t,
 ) -> ble_npl_error_t {
-    todo!()
+    trace!("ble_npl_mutex_pend {:?} {:?}", mutex, _time);
+
+    let mutex = if !mutex.is_null() {
+        // safety: We are protected by the check we just performed
+        unsafe { (*mutex.cast_mut()).dummy as *mut c_void }
+    } else {
+        return ble_npl_error_BLE_NPL_EINVAL;
+    };
+
+    if mutex_lock(mutex) == 1 {
+        ble_npl_error_BLE_NPL_OK
+    } else {
+        ble_npl_error_BLE_NPL_TIMEOUT
+    }
 }
 
-unsafe extern "C" fn ble_npl_mutex_deinit(_mutex: *const ble_npl_mutex) -> ble_npl_error_t {
-    todo!()
+unsafe extern "C" fn ble_npl_mutex_deinit(mutex: *const ble_npl_mutex) -> ble_npl_error_t {
+    trace!("ble_npl_mutex_deinit {:?}", mutex);
+
+    let mutex = if !mutex.is_null() {
+        // safety: We are protected by the check we just performed
+        unsafe { (*mutex.cast_mut()).dummy as *mut c_void }
+    } else {
+        return ble_npl_error_BLE_NPL_EINVAL;
+    };
+
+    mutex_delete(mutex);
+
+    ble_npl_error_BLE_NPL_OK
 }
 
 unsafe extern "C" fn ble_npl_event_set_arg(event: *const ble_npl_event, arg: *const c_void) {
@@ -1146,8 +1185,24 @@ unsafe extern "C" fn callout_timer_callback_wrapper(arg: *mut c_void) {
 }
 
 #[cfg_attr(feature = "ble-host-npl", unsafe(no_mangle))]
-unsafe extern "C" fn ble_npl_mutex_init(_mutex: *const ble_npl_mutex) -> u32 {
-    todo!()
+unsafe extern "C" fn ble_npl_mutex_init(mutex: *const ble_npl_mutex) -> ble_npl_error_t {
+    trace!("ble_npl_mutex_init {:?}", mutex);
+    if mutex.is_null() {
+        return ble_npl_error_BLE_NPL_EINVAL;
+    }
+
+    let new_mutex = mutex_create(false);
+
+    if !new_mutex.is_null() {
+        // safety: Safe to dereference, we already checked it was not null before
+        unsafe {
+            (*mutex.cast_mut()).dummy = new_mutex as c_int;
+        }
+
+        ble_npl_error_BLE_NPL_OK
+    } else {
+        ble_npl_error_BLE_NPL_ERROR
+    }
 }
 
 #[cfg_attr(feature = "ble-host-npl", unsafe(no_mangle))]
