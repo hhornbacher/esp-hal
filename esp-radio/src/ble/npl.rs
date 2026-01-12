@@ -6,10 +6,16 @@ use core::{
 
 use esp_hal::time::Instant;
 use esp_phy::PhyInitGuard;
+use esp_radio_rtos_driver::semaphore::{SemaphoreHandle, SemaphorePtr};
 
 use super::*;
 use crate::{
-    compat::{self, OSI_FUNCS_TIME_BLOCKING, common::str_from_c, queue},
+    compat::{
+        self, OSI_FUNCS_TIME_BLOCKING,
+        common::str_from_c,
+        queue,
+        semaphore::{sem_create, sem_delete, sem_give, sem_take},
+    },
     sys::{c_types::*, include::*},
     time::{blob_ticks_to_micros, blob_ticks_to_millis, millis_to_blob_ticks},
 };
@@ -784,29 +790,109 @@ unsafe extern "C" fn ble_npl_callout_reset(
 }
 
 #[cfg_attr(feature = "ble-host-npl", unsafe(no_mangle))]
-unsafe extern "C" fn ble_npl_sem_get_count(_sem: *const ble_npl_sem) -> u16 {
-    todo!()
+unsafe extern "C" fn ble_npl_sem_get_count(sem: *const ble_npl_sem) -> u16 {
+    trace!("ble_npl_sem_get_count {:?}", sem);
+
+    if !sem.is_null() {
+        // safety: We are protected by the check we just performed
+        unsafe {
+            let ptr = SemaphorePtr::new_unchecked((*sem).dummy as *mut c_void as *mut ());
+            let semaphore = SemaphoreHandle::ref_from_ptr(&ptr);
+
+            let count = semaphore.current_count();
+            if count <= u16::MAX as _ {
+                count as u16
+            } else {
+                error!("ble_npl_sem_get_count too large");
+
+                0
+            }
+        }
+    } else {
+        error!("ble_npl_sem_get_count NULL semaphore");
+
+        0
+    }
 }
 
-unsafe extern "C" fn ble_npl_sem_release(_sem: *const ble_npl_sem) -> ble_npl_error_t {
-    todo!()
+#[cfg_attr(feature = "ble-host-npl", unsafe(no_mangle))]
+unsafe extern "C" fn ble_npl_sem_release(sem: *const ble_npl_sem) -> ble_npl_error_t {
+    trace!("ble_npl_sem_release {:?}", sem);
+
+    if sem.is_null() {
+        return ble_npl_error_BLE_NPL_EINVAL;
+    }
+
+    // safety: We are protected by the check we just performed
+    if sem_give(unsafe { (*sem.cast_mut()).dummy as *mut c_void }) == 1 {
+        ble_npl_error_BLE_NPL_OK
+    } else {
+        ble_npl_error_BLE_NPL_ERROR
+    }
 }
 
 #[cfg_attr(feature = "ble-host-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_sem_pend(
-    _sem: *const ble_npl_sem,
-    _time: ble_npl_time_t,
+    sem: *const ble_npl_sem,
+    time: ble_npl_time_t,
 ) -> ble_npl_error_t {
-    todo!()
+    trace!("ble_npl_sem_pend {:?} {:?}", sem, time);
+
+    let semaphore = if !sem.is_null() {
+        // safety: We are protected by the check we just performed
+        unsafe { (*sem.cast_mut()).dummy as *mut c_void }
+    } else {
+        return ble_npl_error_BLE_NPL_EINVAL;
+    };
+
+    let mut ticks_ms = 0;
+    unsafe { ble_npl_time_ticks_to_ms(time, addr_of_mut!(ticks_ms)) };
+    let ticks_us = ticks_ms * 1_000;
+
+    if sem_take(semaphore, ticks_us) == 1 {
+        ble_npl_error_BLE_NPL_OK
+    } else {
+        ble_npl_error_BLE_NPL_TIMEOUT
+    }
 }
 
-unsafe extern "C" fn ble_npl_sem_deinit(_sem: *const ble_npl_sem) -> ble_npl_error_t {
-    todo!()
+#[cfg_attr(feature = "ble-host-npl", unsafe(no_mangle))]
+unsafe extern "C" fn ble_npl_sem_deinit(sem: *const ble_npl_sem) -> ble_npl_error_t {
+    trace!("ble_npl_sem_deinit {:?}", sem);
+
+    let semaphore = if !sem.is_null() {
+        // safety: We are protected by the check we just performed
+        unsafe { (*sem.cast_mut()).dummy as *mut c_void }
+    } else {
+        return ble_npl_error_BLE_NPL_EINVAL;
+    };
+
+    sem_delete(semaphore);
+
+    ble_npl_error_BLE_NPL_OK
 }
 
 #[cfg_attr(feature = "ble-host-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_sem_init(sem: *const ble_npl_sem, val: u16) -> ble_npl_error_t {
-    todo!()
+    trace!("ble_npl_sem_init {:?} {:?}", sem, val);
+
+    if sem.is_null() {
+        return ble_npl_error_BLE_NPL_EINVAL;
+    }
+
+    // Use a maximum of u16::MAX since NPL expect the count as u16
+    let new_sem = sem_create(u16::MAX as _, val as _);
+
+    if !new_sem.is_null() {
+        // safety: Safe to dereference, we already checked it was not null before
+        unsafe {
+            (*sem.cast_mut()).dummy = new_sem as c_int;
+        }
+
+        ble_npl_error_BLE_NPL_OK
+    } else {
+        ble_npl_error_BLE_NPL_ERROR
+    }
 }
 
 #[cfg_attr(feature = "ble-host-npl", unsafe(no_mangle))]
