@@ -13,7 +13,6 @@ pub mod npl;
 use alloc::{boxed::Box, collections::vec_deque::VecDeque, vec::Vec};
 use core::mem::MaybeUninit;
 
-pub use ble::ble_os_adapter_chip_specific::Config;
 pub(crate) use ble::{ble_deinit, ble_init, send_hci};
 use esp_sync::NonReentrantMutex;
 
@@ -22,6 +21,9 @@ use esp_sync::NonReentrantMutex;
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[non_exhaustive]
 pub struct InvalidConfigError;
+
+// Expose chip-specific configuration types
+pub use ble::ble_os_adapter_chip_specific::*;
 
 #[cfg(bt_controller = "btdm")]
 use self::btdm as ble;
