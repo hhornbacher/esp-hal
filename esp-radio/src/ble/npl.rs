@@ -6,6 +6,7 @@ use core::{
 
 use esp_hal::time::Instant;
 use esp_phy::{PhyController, PhyInitGuard};
+use esp_radio_rtos_driver::current_task;
 use esp_radio_rtos_driver::semaphore::{SemaphoreHandle, SemaphorePtr};
 
 use super::*;
@@ -1194,7 +1195,10 @@ unsafe extern "C" fn ble_npl_mutex_init(mutex: *const ble_npl_mutex) -> ble_npl_
 
 #[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_get_current_task_id() -> *const c_void {
-    todo!()
+    let current_task = current_task().cast().as_ptr() as *const c_void;
+    trace!("ble_npl_get_current_task_id {:?}", current_task);
+
+    current_task
 }
 
 #[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
