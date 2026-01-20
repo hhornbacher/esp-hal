@@ -1168,6 +1168,7 @@ unsafe extern "C" fn ble_npl_callout_init(
         unsafe {
             let new_callout =
                 crate::compat::malloc::calloc(1, core::mem::size_of::<Callout>()) as *mut Callout;
+            (*new_callout).eventq = eventq;
             ble_npl_event_init(addr_of_mut!((*new_callout).events), func, args);
             (*callout).dummy = new_callout as i32;
 
