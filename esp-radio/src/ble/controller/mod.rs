@@ -1,19 +1,14 @@
 use core::task::Poll;
 
 use bt_hci::{
-    ControllerToHostPacket,
-    FromHciBytes,
-    FromHciBytesError,
-    HostToControllerPacket,
-    WriteHci,
+    ControllerToHostPacket, FromHciBytes, FromHciBytesError, HostToControllerPacket, WriteHci,
     transport::{Transport, WithIndicator},
 };
 use esp_hal::asynch::AtomicWaker;
 use esp_phy::PhyInitGuard;
 
 use crate::{
-    InitializationError,
-    RadioRefGuard,
+    InitializationError, RadioRefGuard,
     ble::{Config, InvalidConfigError, have_hci_read_data, read_hci, read_next, send_hci},
 };
 
@@ -233,7 +228,7 @@ impl From<FromHciBytesError> for BleConnectorError {
 }
 
 #[must_use = "futures do nothing unless you `.await` or poll them"]
-pub(crate) struct HciReadyEventFuture;
+pub struct HciReadyEventFuture;
 
 impl core::future::Future for HciReadyEventFuture {
     type Output = ();
