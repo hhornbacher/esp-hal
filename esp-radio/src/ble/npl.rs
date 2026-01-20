@@ -57,6 +57,7 @@ struct Callout {
     eventq: *const ble_npl_eventq,
     timer_handle: ets_timer,
     events: ble_npl_event,
+    deadline: ble_npl_time_t,
 }
 
 #[repr(C)]
@@ -712,8 +713,17 @@ unsafe extern "C" fn ble_npl_callout_remaining_ticks(
 }
 
 #[cfg_attr(feature = "ble-host-npl", unsafe(no_mangle))]
-unsafe extern "C" fn ble_npl_callout_get_ticks(_callout: *const ble_npl_callout) -> ble_npl_time_t {
-    todo!()
+unsafe extern "C" fn ble_npl_callout_get_ticks(callout: *const ble_npl_callout) -> ble_npl_time_t {
+    trace!("ble_npl_callout_get_ticks {:?}", callout);
+
+    if callout.is_null() {
+        panic!("ble_npl_callout_get_ticks called on null");
+    }
+
+    // safety: We are protected by the check we just performed
+    let co = unsafe { (*callout).dummy as *const Callout };
+
+    unsafe { (*co).deadline }
 }
 
 #[cfg_attr(feature = "ble-host-npl", unsafe(no_mangle))]
