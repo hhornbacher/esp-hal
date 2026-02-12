@@ -1029,13 +1029,6 @@ unsafe extern "C" fn ble_npl_eventq_is_empty(queue: *mut ble_npl_eventq) -> bool
 unsafe extern "C" fn ble_npl_event_run(event: *const ble_npl_event) {
     let st = event_state_ensure(event as *mut ble_npl_event);
 
-    // Optional: early trap if cb looks bogus (helps pinpoint corruption source)
-    // (0x4200_0000..0x4300_0000) is a common “code-ish” region on ESP chips; tune as needed.
-    let cb_addr = (*st).cb as usize;
-    if cb_addr < 0x4200_0000 {
-        panic!("NPL: cb not in code-ish region: {:#x} event={:p}", cb_addr, event);
-    }
-
     ((*st).cb)(event as u32);
 }
 
@@ -1505,14 +1498,14 @@ fn os_msys_init() {
 }
 
 unsafe extern "C" fn ble_hs_hci_rx_evt(cmd: *const u8, arg: *const c_void) -> i32 {
-    info!("ble_hs_hci_rx_evt {:?} {:?}", cmd, arg);
-    info!("$ cmd = {:x}", unsafe { *cmd });
+    trace!("ble_hs_hci_rx_evt {:?} {:?}", cmd, arg);
+    trace!("$ cmd = {:x}", unsafe { *cmd });
     trace!("$ len = {:x}", unsafe { *(cmd.offset(1)) });
 
     let event = unsafe { *cmd };
     let len = unsafe { *(cmd.offset(1)) } as usize;
     let payload = unsafe { core::slice::from_raw_parts(cmd.offset(2), len) };
-    info!("$ pld = {:02x?}", payload);
+    trace!("$ event = {:02x}", event);
 
     super::BT_STATE.with(|state| {
         let mut data = [0u8; 256];
@@ -1521,8 +1514,6 @@ unsafe extern "C" fn ble_hs_hci_rx_evt(cmd: *const u8, arg: *const c_void) -> i3
         data[1] = event;
         data[2] = len as u8;
         data[3..][..len].copy_from_slice(payload);
-
-        info!("$ rx_queue len = {}", state.rx_queue.len());
 
         state.rx_queue.push_back(ReceivedPacket {
             data: Box::from(&data[..len + 3]),
