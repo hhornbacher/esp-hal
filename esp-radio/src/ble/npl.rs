@@ -1624,14 +1624,18 @@ pub fn send_hci(data: &[u8]) {
 
             super::BT_STATE.with(|_state| {
                 if packet[0] == DATA_TYPE_COMMAND {
-                    let cmd = r_ble_hci_trans_buf_alloc(BLE_HCI_TRANS_BUF_CMD);
-                    core::ptr::copy_nonoverlapping(
-                        &packet[1] as *const _ as *mut u8, // don't send the TYPE
-                        cmd as *mut u8,
-                        packet.len() - 1,
-                    );
+                    let cmd = r_ble_hci_trans_buf_alloc(BLE_HCI_TRANS_BUF_CMD) as *mut u8;
 
-                    let res = r_ble_hci_trans_hs_cmd_tx(cmd);
+                    if cmd.is_null() {
+                        error!("Unable to get HCI transport buffer");
+                        return;
+                    }
+
+                    let cmd = core::slice::from_raw_parts_mut(cmd, packet.len() - 1);
+
+                    cmd.copy_from_slice(&packet[1..]);
+
+                    let res = r_ble_hci_trans_hs_cmd_tx(cmd.as_ptr());
 
                     if res != 0 {
                         warn!("ble_hci_trans_hs_cmd_tx res == {}", res);
