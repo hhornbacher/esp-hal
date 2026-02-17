@@ -61,6 +61,7 @@ struct Callout {
 const EVENT_MAGIC: u32 = 0xE7E7_0A0A;
 
 #[repr(C)]
+#[derive(Debug)]
 struct EventState {
     magic: u32,
     cb: unsafe extern "C" fn(u32),
@@ -1148,7 +1149,7 @@ unsafe extern "C" fn ble_npl_callout_init(
 }
 
 unsafe extern "C" fn callout_timer_callback_wrapper(arg: *mut c_void) {
-    info!("callout_timer_callback_wrapper {:?}", arg);
+    trace!("callout_timer_callback_wrapper {:?}", arg);
     let co = unsafe { (*(arg as *mut ble_npl_callout)).dummy } as *mut Callout;
 
     unsafe {
