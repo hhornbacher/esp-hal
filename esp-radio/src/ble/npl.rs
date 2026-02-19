@@ -58,12 +58,134 @@ struct Callout {
     deadline: ble_npl_time_t,
 }
 
+unsafe extern "C" fn dummy_fn(_: u32) {}
+
+// Fixed, heap-free pool for EventState.
+// IMPORTANT: In this port, `ble_npl_event_deinit()` is never called by NimBLE,
+// so we must NOT allocate one EventState per `ble_npl_event_init()`.
+// Instead we keep a fixed pool and map each event pointer to a pool slot.
+// This makes memory use bounded even if deinit is never invoked.
+//
+// Increase this if you see "EventState pool exhausted" panics under load.
+const EVENT_STATE_POOL_SIZE: usize = 128;
+static mut EVENT_STATE_POOL: [EventState; EVENT_STATE_POOL_SIZE] = [EventState {
+    cb: dummy_fn,
+    arg: core::ptr::null(),
+    queued: 0, // 0/1
+    _pad: [0; 3],
+}; EVENT_STATE_POOL_SIZE];
+
+// Parallel metadata arrays for the pool.
+// `KEYS[i]` stores the event pointer address that currently owns slot i (0 means free).
+static mut EVENT_STATE_KEYS: [usize; EVENT_STATE_POOL_SIZE] = [0; EVENT_STATE_POOL_SIZE];
+
 #[repr(C)]
-#[derive(Copy, Clone)]
-struct Event {
-    event_fn_ptr: *const ble_npl_event_fn,
-    ev_arg_ptr: *const c_void,
-    queued: bool,
+#[derive(Copy, Clone, Debug)]
+struct EventState {
+    cb: unsafe extern "C" fn(u32),
+    arg: *const c_void,
+    queued: u8, // 0/1
+    _pad: [u8; 3],
+}
+
+unsafe fn event_state_is_valid(st: *mut EventState) -> bool {
+    !st.is_null()
+}
+
+#[inline]
+fn ptr_hash(mut x: usize) -> usize {
+    // A simple multiplicative hash; good enough for pointer dispersion.
+    // Works on 32-bit and 64-bit.
+    x ^= x >> 16;
+    x = x.wrapping_mul(0x7feb_352d);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x846c_a68b);
+    x ^= x >> 16;
+    x
+}
+
+unsafe fn event_state_ensure(ev: *mut ble_npl_event) -> *mut EventState {
+    // Key is the event pointer address itself.
+    let key = ev as usize;
+    if key == 0 {
+        // Should never happen (ev is a pointer), but keep it defensive.
+        panic!("event_state_ensure called with null event");
+    }
+
+    // Lookup/assign a slot in the pool.
+    // This does not require deinit. Slots are reused when keys differ.
+    let mask = ble_npl_hw_enter_critical();
+
+    let mut idx = ptr_hash(key) % EVENT_STATE_POOL_SIZE;
+    let mut probes = 0usize;
+
+    loop {
+        let k = EVENT_STATE_KEYS[idx];
+
+        if k == 0 {
+            // Free slot: claim it for this key.
+            EVENT_STATE_KEYS[idx] = key;
+
+            let st = &mut EVENT_STATE_POOL[idx] as *mut EventState;
+
+            // Initialize the state.
+            (*st).cb = dummy_fn;
+            (*st).arg = core::ptr::null();
+            (*st).queued = 0;
+
+            // Store a compact slot index in dummy so we can find it quickly later.
+            // (dummy is i32 in your bindings; store idx+1 so 0 means "unset")
+            (*ev).dummy = (idx as i32) + 1;
+
+            ble_npl_hw_exit_critical(mask);
+            return st;
+        }
+
+        if k == key {
+            // Slot already assigned to this event pointer.
+            let st = &mut EVENT_STATE_POOL[idx] as *mut EventState;
+
+            // Ensure magic is valid (in case of earlier corruption).
+            if !event_state_is_valid(st) {
+                (*st).cb = dummy_fn;
+                (*st).arg = core::ptr::null();
+                (*st).queued = 0;
+            }
+
+            // Make sure dummy points to the right slot.
+            (*ev).dummy = (idx as i32) + 1;
+
+            ble_npl_hw_exit_critical(mask);
+            return st;
+        }
+
+        // Collision: probe next slot.
+        idx += 1;
+        if idx == EVENT_STATE_POOL_SIZE {
+            idx = 0;
+        }
+
+        probes += 1;
+        if probes == EVENT_STATE_POOL_SIZE {
+            ble_npl_hw_exit_critical(mask);
+            panic!(
+                "EventState pool exhausted (EVENT_STATE_POOL_SIZE={})",
+                EVENT_STATE_POOL_SIZE
+            );
+        }
+    }
+}
+
+// Helper: retrieve EventState using dummy slot index if present, else fall back to ensure.
+unsafe fn event_state_get_or_ensure(ev: *mut ble_npl_event) -> *mut EventState {
+    let slot = (*ev).dummy;
+    if slot > 0 {
+        let idx = (slot - 1) as usize;
+        if idx < EVENT_STATE_POOL_SIZE && EVENT_STATE_KEYS[idx] == (ev as usize) {
+            return &mut EVENT_STATE_POOL[idx] as *mut EventState;
+        }
+    }
+    event_state_ensure(ev)
 }
 
 #[cfg(esp32c2)]
@@ -936,64 +1058,43 @@ unsafe extern "C" fn ble_npl_mutex_deinit(mutex: *const ble_npl_mutex) -> ble_np
 }
 
 unsafe extern "C" fn ble_npl_event_set_arg(event: *const ble_npl_event, arg: *const c_void) {
-    trace!("ble_npl_event_set_arg {:?} {:?}", event, arg);
-
-    let evt = unsafe { (*event).dummy } as *mut Event;
-    assert!(!evt.is_null());
-
-    unsafe {
-        (*evt).ev_arg_ptr = arg;
-    }
+    let event = event as *mut ble_npl_event;
+    let st = event_state_get_or_ensure(event);
+    (*st).arg = arg;
 }
 
 #[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_event_get_arg(event: *const ble_npl_event) -> *const c_void {
-    trace!("ble_npl_event_get_arg {:?}", event);
-
-    unsafe {
-        let evt = (*event).dummy as *mut Event;
-        assert!(!evt.is_null());
-
-        let arg_ptr = (*evt).ev_arg_ptr;
-
-        trace!("returning arg {:x}", arg_ptr as usize);
-
-        arg_ptr
-    }
+    let st = event_state_get_or_ensure(event as *mut ble_npl_event);
+    (*st).arg
 }
 
 unsafe extern "C" fn ble_npl_event_is_queued(event: *const ble_npl_event) -> bool {
-    trace!("ble_npl_event_is_queued {:?}", event);
-
-    let evt = unsafe { (*event).dummy } as *mut Event;
-    assert!(!evt.is_null());
-
-    unsafe { (*evt).queued }
+    let st = event_state_get_or_ensure(event as *mut ble_npl_event);
+    (*st).queued != 0
 }
 
 unsafe extern "C" fn ble_npl_event_reset(event: *const ble_npl_event) {
-    trace!("ble_npl_event_reset {:?}", event);
-
-    let evt = unsafe { (*event).dummy } as *mut Event;
-    assert!(!evt.is_null());
-
-    unsafe { (*evt).queued = false }
+    let st = event_state_get_or_ensure(event as *mut ble_npl_event);
+    (*st).queued = 0;
 }
 
 unsafe extern "C" fn ble_npl_event_deinit(event: *const ble_npl_event) {
-    trace!("ble_npl_event_deinit {:?}", event);
-
     let event = event as *mut ble_npl_event;
-    let evt = unsafe { (*event).dummy } as *mut Event;
-    assert!(!evt.is_null());
-
-    unsafe {
-        crate::compat::malloc::free(evt.cast());
+    let st = event_state_get_or_ensure(event);
+    if event_state_is_valid(st) {
+        // Return the state to the fixed pool (best-effort).
+        let base = unsafe { &raw mut EVENT_STATE_POOL[0] } as usize;
+        let p = st as usize;
+        let sz = core::mem::size_of::<EventState>();
+        if p >= base && p < base + (EVENT_STATE_POOL_SIZE * sz) {
+            let idx = (p - base) / sz;
+            let mask = ble_npl_hw_enter_critical();
+            EVENT_STATE_KEYS[idx] = 0;
+            ble_npl_hw_exit_critical(mask);
+        }
     }
-
-    unsafe {
-        (*event).dummy = 0;
-    }
+    (*event).dummy = 0;
 }
 
 #[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
@@ -1002,20 +1103,16 @@ unsafe extern "C" fn ble_npl_event_init(
     func: *const ble_npl_event_fn,
     arg: *const c_void,
 ) {
-    trace!("ble_npl_event_init {:?} {:?} {:?}", event, func, arg);
+    let event = event as *mut ble_npl_event;
+    let st = event_state_get_or_ensure(event);
 
-    if unsafe { (*event).dummy } == 0 {
-        unsafe {
-            let evt = crate::compat::malloc::calloc(1, core::mem::size_of::<Event>()) as *mut Event;
+    // Your code currently treats ble_npl_event_fn as a raw pointer and transmutes later.
+    // Keep the same assumption, but store the *actual callable* type in EventState.
+    let cb: unsafe extern "C" fn(u32) = core::mem::transmute(func);
 
-            (*evt).event_fn_ptr = func;
-            (*evt).ev_arg_ptr = arg;
-            (*evt).queued = false;
-
-            let event = event.cast_mut();
-            (*event).dummy = evt as i32;
-        }
-    }
+    (*st).cb = cb;
+    (*st).arg = arg;
+    (*st).queued = 0;
 }
 
 unsafe extern "C" fn ble_npl_eventq_is_empty(queue: *mut ble_npl_eventq) -> bool {
@@ -1027,22 +1124,9 @@ unsafe extern "C" fn ble_npl_eventq_is_empty(queue: *mut ble_npl_eventq) -> bool
 
 #[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_event_run(event: *const ble_npl_event) {
-    trace!("ble_npl_event_run {:?}", event);
+    let st = event_state_get_or_ensure(event as *mut ble_npl_event);
 
-    let evt = unsafe { (*event).dummy } as *mut Event;
-    assert!(!evt.is_null());
-
-    trace!(
-        "info {:?} with arg {:x}",
-        unsafe { (*evt).event_fn_ptr },
-        event as u32
-    );
-    unsafe {
-        let func: unsafe extern "C" fn(u32) = transmute((*evt).event_fn_ptr);
-        func(event as u32);
-    }
-
-    trace!("ble_npl_event_run done");
+    ((*st).cb)(event as u32);
 }
 
 unsafe extern "C" fn ble_npl_eventq_remove(
@@ -1051,40 +1135,34 @@ unsafe extern "C" fn ble_npl_eventq_remove(
 ) {
     trace!("ble_npl_eventq_remove {:?} {:?}", queue, event);
 
-    unsafe {
-        let evt = (*event).dummy as *mut Event;
-        assert!(!evt.is_null());
-
-        if !(*evt).queued {
-            return;
-        }
-
-        let wrapper = unwrap!(queue.as_mut(), "queue wrapper is null");
-        queue::queue_remove(wrapper.dummy as _, (&raw const event).cast());
-
-        (*evt).queued = false;
+    if queue.is_null() || event.is_null() {
+        return;
     }
+
+    let st = event_state_get_or_ensure(event as *mut ble_npl_event);
+
+    if (*st).queued == 0 {
+        return;
+    }
+
+    let wrapper = unwrap!(queue.as_mut(), "queue wrapper is null");
+    queue::queue_remove(wrapper.dummy as _, (&raw const event).cast());
+
+    (*st).queued = 0;
 }
 
 #[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_eventq_put(queue: *mut ble_npl_eventq, event: *const ble_npl_event) {
-    trace!("ble_npl_eventq_put {:?} {:?}", queue, event);
+    let st = event_state_get_or_ensure(event as *mut ble_npl_event);
 
-    let evt = unsafe { (*event).dummy } as *mut Event;
-    assert!(!evt.is_null());
-
-    if unsafe { (*evt).queued } {
-        trace!("Event already queued, skipping put");
+    if (*st).queued != 0 {
         return;
     }
+    (*st).queued = 1;
 
-    unsafe {
-        (*evt).queued = true;
-    }
+    let wrapper = unwrap!(queue.as_mut(), "queue wrapper is null");
 
-    let wrapper = unwrap!(unsafe { queue.as_mut() }, "queue wrapper is null");
-
-    // Store the pointer to the ble_npl_event in the queue - this is what we'll need to dequeue.
+    // Copies the pointer value into the queue item storage (size == usize).
     queue::queue_send_to_back(
         wrapper.dummy as _,
         (&raw const event).cast(),
@@ -1097,25 +1175,21 @@ unsafe extern "C" fn ble_npl_eventq_get(
     queue: *mut ble_npl_eventq,
     timeout: ble_npl_time_t,
 ) -> *const ble_npl_event {
-    trace!("ble_npl_eventq_get {:?} {}", queue, timeout);
-
-    let mut evt = core::ptr::null_mut::<ble_npl_event>();
-    let wrapper = unwrap!(unsafe { queue.as_mut() }, "queue wrapper is null");
+    let wrapper = unwrap!(queue.as_mut(), "queue wrapper is null");
+    let mut ev = core::ptr::null_mut::<ble_npl_event>();
 
     if queue::queue_receive(
         wrapper.dummy as _,
-        (&raw mut evt).cast(),
+        (&raw mut ev).cast(),
         blob_ticks_to_micros(timeout),
     ) == 1
     {
-        trace!("got {:x}", evt as usize);
-        unsafe {
-            let evt = (*evt).dummy as *mut Event;
-            (*evt).queued = false;
-        }
+        let st = event_state_get_or_ensure(ev);
+        (*st).queued = 0;
+        return ev;
     }
 
-    evt.cast_const()
+    core::ptr::null()
 }
 
 #[cfg_attr(feature = "export-npl", unsafe(no_mangle))]
@@ -1600,14 +1674,18 @@ pub fn send_hci(data: &[u8]) {
 
             super::BT_STATE.with(|_state| {
                 if packet[0] == DATA_TYPE_COMMAND {
-                    let cmd = r_ble_hci_trans_buf_alloc(BLE_HCI_TRANS_BUF_CMD);
-                    core::ptr::copy_nonoverlapping(
-                        &packet[1] as *const _ as *mut u8, // don't send the TYPE
-                        cmd as *mut u8,
-                        packet.len() - 1,
-                    );
+                    let cmd = r_ble_hci_trans_buf_alloc(BLE_HCI_TRANS_BUF_CMD) as *mut u8;
 
-                    let res = r_ble_hci_trans_hs_cmd_tx(cmd);
+                    if cmd.is_null() {
+                        error!("Unable to get HCI transport buffer");
+                        return;
+                    }
+
+                    let cmd = core::slice::from_raw_parts_mut(cmd, packet.len() - 1);
+
+                    cmd.copy_from_slice(&packet[1..]);
+
+                    let res = r_ble_hci_trans_hs_cmd_tx(cmd.as_ptr());
 
                     if res != 0 {
                         warn!("ble_hci_trans_hs_cmd_tx res == {}", res);
