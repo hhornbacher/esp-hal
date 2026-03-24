@@ -1007,6 +1007,7 @@ unsafe extern "C" fn ble_npl_event_reset(event: *const ble_npl_event) {
     unsafe { (*evt).queued = false }
 }
 
+#[cfg_attr(feature = "ble-host-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_event_deinit(event: *const ble_npl_event) {
     trace!("ble_npl_event_deinit {:?}", event);
 
