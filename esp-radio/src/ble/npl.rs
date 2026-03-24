@@ -1131,6 +1131,23 @@ unsafe extern "C" fn ble_npl_eventq_get(
     evt.cast_const()
 }
 
+/// Default event queue used by the NimBLE host when no specific queue is provided.
+static mut DEFAULT_EVENTQ: ble_npl_eventq = ble_npl_eventq { dummy: 0 };
+static mut DEFAULT_EVENTQ_INITIALIZED: bool = false;
+
+#[cfg_attr(feature = "ble-host-npl", unsafe(no_mangle))]
+unsafe extern "C" fn ble_npl_eventq_dflt_get() -> *mut ble_npl_eventq {
+    trace!("ble_npl_eventq_dflt_get");
+
+    unsafe {
+        if !DEFAULT_EVENTQ_INITIALIZED {
+            ble_npl_eventq_init(addr_of_mut!(DEFAULT_EVENTQ));
+            DEFAULT_EVENTQ_INITIALIZED = true;
+        }
+        addr_of_mut!(DEFAULT_EVENTQ)
+    }
+}
+
 #[cfg_attr(feature = "ble-host-npl", unsafe(no_mangle))]
 unsafe extern "C" fn ble_npl_eventq_init(queue: *mut ble_npl_eventq) {
     trace!("ble_npl_eventq_init {:?}", queue);
