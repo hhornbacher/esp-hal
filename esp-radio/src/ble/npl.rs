@@ -791,7 +791,7 @@ unsafe extern "C" fn ble_npl_callout_reset(
 
     let co = unsafe { (*callout).dummy } as *mut Callout;
     unsafe {
-        // start timer
+        (*co).deadline = ble_npl_time_get() + time;
         compat::timer_compat::compat_timer_arm(
             &raw mut (*co).timer_handle,
             blob_ticks_to_millis(time),
