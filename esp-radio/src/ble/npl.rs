@@ -999,7 +999,12 @@ unsafe extern "C" fn ble_npl_event_deinit(event: *const ble_npl_event) {
 
     let event = event as *mut ble_npl_event;
     let evt = unsafe { (*event).dummy } as *mut Event;
-    assert!(!evt.is_null());
+
+    // NimBLE may call deinit on events that were never initialised (dummy == 0);
+    // treat that as a no-op, matching other NPL reference implementations.
+    if evt.is_null() {
+        return;
+    }
 
     unsafe {
         crate::compat::malloc::free(evt.cast());
